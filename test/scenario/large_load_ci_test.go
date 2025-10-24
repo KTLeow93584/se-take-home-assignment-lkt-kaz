@@ -18,18 +18,23 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestLargeLoad tests the system with 10,000 Regular, 5,000 VIP customers, 1,250 cook bots
-// This represents a high-volume stress test scenario
-// 1 order per customer per second for 3 minutes (15,000 orders/second)
-// Records completion rate every 20 seconds
-func TestLargeLoad(t *testing.T) {
+// CI-specific test configuration constants
+// These values are optimized for CI/CD environments where execution time is critical
+const (
+	ciLargeTestDuration    = 1 * time.Minute  // CI: 1 minute (vs 3 minutes in original)
+	ciLargeReportInterval  = 10 * time.Second // CI: 10 seconds (vs 20 seconds in original)
+	ciLargeServingDuration = 10 * time.Second // Keep same as original
+)
+
+// TestLargeLoadCI tests the system with 10,000 Regular, 5,000 VIP customers, 1,250 cook bots
+// This is the CI/CD-optimized version with shorter duration for faster feedback
+// 1 order per customer per second for 1 minute (15,000 orders/second)
+// Records completion rate every 10 seconds
+func TestLargeLoadCI(t *testing.T) {
 	const (
 		numRegularCustomers = 10000
 		numVIPCustomers     = 5000
 		numCooks            = 1250
-		testDuration        = 3 * time.Minute
-		reportInterval      = 20 * time.Second
-		servingDuration     = 10 * time.Second
 	)
 
 	ctx := context.Background()
@@ -41,8 +46,9 @@ func TestLargeLoad(t *testing.T) {
 	}
 	defer log.Close()
 
-	log.Info("=== Starting Large Load Test ===")
+	log.Info("=== Starting Large Load CI Test ===")
 	log.Info("Parameters: %d Regular, %d VIP customers, %d cooks", numRegularCustomers, numVIPCustomers, numCooks)
+	log.Info("CI Configuration: Duration=%v, ReportInterval=%v", ciLargeTestDuration, ciLargeReportInterval)
 
 	// Initialize repositories
 	userRepo := memory.NewUserRepository()
@@ -61,12 +67,12 @@ func TestLargeLoad(t *testing.T) {
 
 	// Initialize services
 	orderQueue := queue.NewPriorityQueue()
-	orderService := service.NewOrderService(orderRepo, userRepo, foodRepo, orderQueue, log, servingDuration)
-	cookService := service.NewCookService(userRepo, orderRepo, orderQueue, log, servingDuration)
+	orderService := service.NewOrderService(orderRepo, userRepo, foodRepo, orderQueue, log, ciLargeServingDuration)
+	cookService := service.NewCookService(userRepo, orderRepo, orderQueue, log, ciLargeServingDuration)
 
 	// Start cook workers
 	for _, cook := range cooks {
-		go helpers.StartCookWorker(ctx, cookService, cook.ID, testDuration)
+		go helpers.StartCookWorker(ctx, cookService, cook.ID, ciLargeTestDuration)
 	}
 
 	// Statistics tracking
@@ -79,7 +85,7 @@ func TestLargeLoad(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(reportInterval)
+		ticker := time.NewTicker(ciLargeReportInterval)
 		defer ticker.Stop()
 
 		startTime := time.Now()
@@ -135,7 +141,7 @@ func TestLargeLoad(t *testing.T) {
 			case <-stopOrders:
 				return
 			case <-ticker.C:
-				if time.Since(startTime) >= testDuration {
+				if time.Since(startTime) >= ciLargeTestDuration {
 					return
 				}
 
@@ -158,31 +164,33 @@ func TestLargeLoad(t *testing.T) {
 	}()
 
 	// Wait for test duration
-	time.Sleep(testDuration)
+	time.Sleep(ciLargeTestDuration)
 	close(stopOrders)
 	close(stopReporting)
 	wg.Wait()
 
 	// Wait a bit for final orders to complete
-	time.Sleep(servingDuration + 2*time.Second)
+	time.Sleep(ciLargeServingDuration + 2*time.Second)
 
 	// Final statistics
 	completed, incomplete, _ := orderService.GetOrderStats(ctx)
 
-	log.Info("=== Large Load Test Results ===")
+	log.Info("=== Large Load CI Test Results ===")
 	log.Info("Regular Customers: %d", numRegularCustomers)
 	log.Info("VIP Customers: %d", numVIPCustomers)
 	log.Info("Cook Bots: %d", numCooks)
-	log.Info("Test Duration: %v", testDuration)
+	log.Info("Test Duration: %v", ciLargeTestDuration)
+	log.Info("Report Interval: %v", ciLargeReportInterval)
 	log.Info("Final Completed: %d", completed)
 	log.Info("Final Incomplete: %d", incomplete)
 	log.Info("Completion Rate: %.2f%%", float64(completed)/float64(completed+incomplete)*100)
 
-	t.Logf("\n=== Large Load Test Results ===")
+	t.Logf("\n=== Large Load CI Test Results ===")
 	t.Logf("Regular Customers: %d", numRegularCustomers)
 	t.Logf("VIP Customers: %d", numVIPCustomers)
 	t.Logf("Cook Bots: %d", numCooks)
-	t.Logf("Test Duration: %v", testDuration)
+	t.Logf("Test Duration: %v", ciLargeTestDuration)
+	t.Logf("Report Interval: %v", ciLargeReportInterval)
 	t.Logf("Final Completed: %d", completed)
 	t.Logf("Final Incomplete: %d", incomplete)
 	t.Logf("Completion Rate: %.2f%%", float64(completed)/float64(completed+incomplete)*100)

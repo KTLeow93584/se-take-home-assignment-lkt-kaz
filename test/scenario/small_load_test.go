@@ -33,7 +33,16 @@ func TestSmallLoad(t *testing.T) {
 	)
 
 	ctx := context.Background()
-	log := logger.NewNoOpLogger()
+
+	// Use file logger to capture detailed cook bot activity
+	log, err := logger.NewFileLogger("./logs")
+	if err != nil {
+		t.Fatalf("Failed to create logger: %v", err)
+	}
+	defer log.Close()
+
+	log.Info("=== Starting Small Load Test ===")
+	log.Info("Parameters: %d Regular, %d VIP customers, %d cooks", numRegularCustomers, numVIPCustomers, numCooks)
 
 	// Initialize repositories
 	userRepo := memory.NewUserRepository()
@@ -52,7 +61,7 @@ func TestSmallLoad(t *testing.T) {
 
 	// Initialize services
 	orderQueue := queue.NewPriorityQueue()
-	orderService := service.NewOrderService(orderRepo, userRepo, orderQueue, log, servingDuration)
+	orderService := service.NewOrderService(orderRepo, userRepo, foodRepo, orderQueue, log, servingDuration)
 	cookService := service.NewCookService(userRepo, orderRepo, orderQueue, log, servingDuration)
 
 	// Start cook workers
@@ -147,6 +156,16 @@ func TestSmallLoad(t *testing.T) {
 
 	// Final statistics
 	completed, incomplete, _ := orderService.GetOrderStats(ctx)
+
+	log.Info("=== Small Load Test Results ===")
+	log.Info("Regular Customers: %d", numRegularCustomers)
+	log.Info("VIP Customers: %d", numVIPCustomers)
+	log.Info("Cook Bots: %d", numCooks)
+	log.Info("Test Duration: %v", testDuration)
+	log.Info("Final Completed: %d", completed)
+	log.Info("Final Incomplete: %d", incomplete)
+	log.Info("Completion Rate: %.2f%%", float64(completed)/float64(completed+incomplete)*100)
+
 	t.Logf("\n=== Small Load Test Results ===")
 	t.Logf("Regular Customers: %d", numRegularCustomers)
 	t.Logf("VIP Customers: %d", numVIPCustomers)

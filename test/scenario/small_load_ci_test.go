@@ -18,18 +18,23 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// TestLargeLoad tests the system with 10,000 Regular, 5,000 VIP customers, 1,250 cook bots
-// This represents a high-volume stress test scenario
-// 1 order per customer per second for 3 minutes (15,000 orders/second)
-// Records completion rate every 20 seconds
-func TestLargeLoad(t *testing.T) {
+// CI-specific test configuration constants
+// These values are optimized for CI/CD environments where execution time is critical
+const (
+	ciSmallTestDuration    = 1 * time.Minute  // CI: 1 minute (vs 3 minutes in original)
+	ciSmallReportInterval  = 10 * time.Second // CI: 10 seconds (vs 20 seconds in original)
+	ciSmallServingDuration = 10 * time.Second // Keep same as original
+)
+
+// TestSmallLoadCI tests the system with 100 Regular, 50 VIP customers, 25 cook bots
+// This is the CI/CD-optimized version with shorter duration for faster feedback
+// 1 order per customer per second for 1 minute (configurable via constants)
+// Records completion rate every 10 seconds
+func TestSmallLoadCI(t *testing.T) {
 	const (
-		numRegularCustomers = 10000
-		numVIPCustomers     = 5000
-		numCooks            = 1250
-		testDuration        = 3 * time.Minute
-		reportInterval      = 20 * time.Second
-		servingDuration     = 10 * time.Second
+		numRegularCustomers = 100
+		numVIPCustomers     = 50
+		numCooks            = 25
 	)
 
 	ctx := context.Background()
@@ -41,8 +46,9 @@ func TestLargeLoad(t *testing.T) {
 	}
 	defer log.Close()
 
-	log.Info("=== Starting Large Load Test ===")
+	log.Info("=== Starting Small Load CI Test ===")
 	log.Info("Parameters: %d Regular, %d VIP customers, %d cooks", numRegularCustomers, numVIPCustomers, numCooks)
+	log.Info("CI Configuration: Duration=%v, ReportInterval=%v", ciSmallTestDuration, ciSmallReportInterval)
 
 	// Initialize repositories
 	userRepo := memory.NewUserRepository()
@@ -61,12 +67,12 @@ func TestLargeLoad(t *testing.T) {
 
 	// Initialize services
 	orderQueue := queue.NewPriorityQueue()
-	orderService := service.NewOrderService(orderRepo, userRepo, foodRepo, orderQueue, log, servingDuration)
-	cookService := service.NewCookService(userRepo, orderRepo, orderQueue, log, servingDuration)
+	orderService := service.NewOrderService(orderRepo, userRepo, foodRepo, orderQueue, log, ciSmallServingDuration)
+	cookService := service.NewCookService(userRepo, orderRepo, orderQueue, log, ciSmallServingDuration)
 
 	// Start cook workers
 	for _, cook := range cooks {
-		go helpers.StartCookWorker(ctx, cookService, cook.ID, testDuration)
+		go helpers.StartCookWorker(ctx, cookService, cook.ID, ciSmallTestDuration)
 	}
 
 	// Statistics tracking
@@ -79,7 +85,7 @@ func TestLargeLoad(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		ticker := time.NewTicker(reportInterval)
+		ticker := time.NewTicker(ciSmallReportInterval)
 		defer ticker.Stop()
 
 		startTime := time.Now()
@@ -113,19 +119,13 @@ func TestLargeLoad(t *testing.T) {
 		allCustomers := append(regularCustomers, vipCustomers...)
 
 		// Create initial batch of orders at t=0 (before ticker starts)
-		var orderWg sync.WaitGroup
 		for _, customer := range allCustomers {
-			orderWg.Add(1)
-			go func(custID int) {
-				defer orderWg.Done()
-				foodIDs := []int{foods[0].ID}
-				_, err := orderService.CreateOrder(ctx, custID, foodIDs)
-				if err != nil {
-					t.Logf("Failed to create order for customer %d: %v", custID, err)
-				}
-			}(customer.ID)
+			foodIDs := []int{foods[0].ID} // Simple: just one food item
+			_, err := orderService.CreateOrder(ctx, customer.ID, foodIDs)
+			if err != nil {
+				t.Logf("Failed to create order for customer %d: %v", customer.ID, err)
+			}
 		}
-		orderWg.Wait()
 
 		ticker := time.NewTicker(1 * time.Second)
 		defer ticker.Stop()
@@ -135,54 +135,50 @@ func TestLargeLoad(t *testing.T) {
 			case <-stopOrders:
 				return
 			case <-ticker.C:
-				if time.Since(startTime) >= testDuration {
+				if time.Since(startTime) >= ciSmallTestDuration {
 					return
 				}
 
-				// Create orders for all customers concurrently
-				var orderWg sync.WaitGroup
+				// Create orders for all customers
 				for _, customer := range allCustomers {
-					orderWg.Add(1)
-					go func(custID int) {
-						defer orderWg.Done()
-						foodIDs := []int{foods[0].ID}
-						_, err := orderService.CreateOrder(ctx, custID, foodIDs)
-						if err != nil {
-							t.Logf("Failed to create order for customer %d: %v", custID, err)
-						}
-					}(customer.ID)
+					foodIDs := []int{foods[0].ID} // Simple: just one food item
+					_, err := orderService.CreateOrder(ctx, customer.ID, foodIDs)
+					if err != nil {
+						t.Logf("Failed to create order for customer %d: %v", customer.ID, err)
+					}
 				}
-				orderWg.Wait()
 			}
 		}
 	}()
 
 	// Wait for test duration
-	time.Sleep(testDuration)
+	time.Sleep(ciSmallTestDuration)
 	close(stopOrders)
 	close(stopReporting)
 	wg.Wait()
 
 	// Wait a bit for final orders to complete
-	time.Sleep(servingDuration + 2*time.Second)
+	time.Sleep(ciSmallServingDuration + 2*time.Second)
 
 	// Final statistics
 	completed, incomplete, _ := orderService.GetOrderStats(ctx)
 
-	log.Info("=== Large Load Test Results ===")
+	log.Info("=== Small Load CI Test Results ===")
 	log.Info("Regular Customers: %d", numRegularCustomers)
 	log.Info("VIP Customers: %d", numVIPCustomers)
 	log.Info("Cook Bots: %d", numCooks)
-	log.Info("Test Duration: %v", testDuration)
+	log.Info("Test Duration: %v", ciSmallTestDuration)
+	log.Info("Report Interval: %v", ciSmallReportInterval)
 	log.Info("Final Completed: %d", completed)
 	log.Info("Final Incomplete: %d", incomplete)
 	log.Info("Completion Rate: %.2f%%", float64(completed)/float64(completed+incomplete)*100)
 
-	t.Logf("\n=== Large Load Test Results ===")
+	t.Logf("\n=== Small Load CI Test Results ===")
 	t.Logf("Regular Customers: %d", numRegularCustomers)
 	t.Logf("VIP Customers: %d", numVIPCustomers)
 	t.Logf("Cook Bots: %d", numCooks)
-	t.Logf("Test Duration: %v", testDuration)
+	t.Logf("Test Duration: %v", ciSmallTestDuration)
+	t.Logf("Report Interval: %v", ciSmallReportInterval)
 	t.Logf("Final Completed: %d", completed)
 	t.Logf("Final Incomplete: %d", incomplete)
 	t.Logf("Completion Rate: %.2f%%", float64(completed)/float64(completed+incomplete)*100)

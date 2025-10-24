@@ -262,8 +262,9 @@ func (s *cookService) AcceptOrder(ctx context.Context, cookID int) (*domain.Orde
 		return nil, fmt.Errorf("failed to update order status: %w", err)
 	}
 
-	s.logger.Info("Order %d accepted by cook %s (ID: %d) - Queue size: %d",
-		order.ID, cook.Name, cookID, s.orderQueue.Size())
+	// Enhanced logging: Cook takes up an order
+	s.logger.Info("Cook %s (ID: %d) TOOK ORDER %d - Queue size: %d",
+		cook.Name, cookID, order.ID, s.orderQueue.Size())
 
 	// Process order in background (simulate 10s cooking time)
 	go s.processOrder(ctx, order.ID, cookID)
@@ -274,13 +275,18 @@ func (s *cookService) AcceptOrder(ctx context.Context, cookID int) (*domain.Orde
 // processOrder simulates order processing (SERVING -> COMPLETE after servingDuration)
 // Time Complexity: O(1) - single order update after sleep
 func (s *cookService) processOrder(ctx context.Context, orderID, cookID int) {
+	// Record start time for processing duration calculation
+	startTime := time.Now()
+
 	// Simulate cooking time with context cancellation support
 	select {
 	case <-time.After(s.servingDuration):
 		// Cooking completed normally
 	case <-ctx.Done():
-		// Context cancelled, log and exit
-		s.logger.Info("Order %d processing cancelled: %v", orderID, ctx.Err())
+		// Context cancelled - order is abandoned
+		processingTime := time.Since(startTime)
+		s.logger.Info("Cook %d ABANDONED ORDER %d - Reason: Cancelled (%v) - Processing time: %v",
+			cookID, orderID, ctx.Err(), processingTime.Round(time.Millisecond))
 		return
 	}
 
@@ -290,7 +296,12 @@ func (s *cookService) processOrder(ctx context.Context, orderID, cookID int) {
 		return
 	}
 
-	s.logger.Info("Order %d completed by cook %d", orderID, cookID)
+	// Calculate processing time
+	processingTime := time.Since(startTime)
+
+	// Enhanced logging: Cook completes an order with processing time
+	s.logger.Info("Cook %d COMPLETED ORDER %d - Processing time: %v",
+		cookID, orderID, processingTime.Round(time.Millisecond))
 }
 
 // StartWorkerPool starts N cook bot workers that continuously process orders
