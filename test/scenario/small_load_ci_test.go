@@ -4,7 +4,6 @@ package scenario
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
