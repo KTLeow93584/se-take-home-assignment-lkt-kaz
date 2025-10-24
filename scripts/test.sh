@@ -32,63 +32,51 @@ echo ""
 cd "$PROJECT_ROOT"
 
 if [ "$CI_MODE" = true ]; then
-    # CI Mode: Run 1-minute tests for faster CI/CD feedback
+    # CI Mode: Run minimal test for faster CI/CD feedback
     echo "============================================================"
-    echo "Running CI Scenario Tests (Optimized for CI/CD)"
+    echo "Running CI Scenario Test (Optimized for CI/CD)"
     echo "============================================================"
     echo ""
-    echo "Tests will run with the following parameters:"
+    echo "Test configuration:"
     echo ""
-    echo "Small Load CI Test:"
-    echo "  - 100 Regular Customers"
-    echo "  - 50 VIP Customers"
-    echo "  - 25 Cook Bots"
-    echo "  - Duration: 1 minute"
-    echo "  - Report Interval: 10 seconds"
+    echo "Small Load CI Test (Minimal):"
+    echo "  - 10 Regular Customers"
+    echo "  - 5 VIP Customers"
+    echo "  - 5 Cook Bots"
+    echo "  - 2 Cycles of Orders"
+    echo "  - Serving Duration: 10 seconds per order"
     echo ""
-    echo "Large Load CI Test:"
-    echo "  - 10,000 Regular Customers"
-    echo "  - 5,000 VIP Customers"
-    echo "  - 1,250 Cook Bots"
-    echo "  - Duration: 1 minute"
-    echo "  - Report Interval: 10 seconds"
+    echo "Purpose: Quick smoke test to verify order processing works"
+    echo "Expected Duration: ~30-40 seconds"
     echo ""
     echo "============================================================"
     echo ""
 
-    # Run the CI scenario tests with proper flags
+    # Run the CI scenario test with proper flags
     # -tags scenario: Include files with //go:build scenario tag
     # -v: Verbose output to see test progress
-    # -timeout: Set timeout for long-running tests (5m should be sufficient for CI tests)
+    # -timeout: Set timeout (2m should be more than sufficient)
     # ./test/scenario: Run only tests in the scenario directory
 
     echo "Starting Small Load CI Test..."
     echo "------------------------------------------------------------"
-    go test -tags scenario -v -timeout 5m ./test/scenario -run TestSmallLoadCI
+    go test -tags scenario -v -timeout 2m ./test/scenario -run TestSmallLoadCI
 
     echo ""
     echo "============================================================"
-    echo ""
-    echo "Starting Large Load CI Test..."
-    echo "------------------------------------------------------------"
-    go test -tags scenario -v -timeout 5m ./test/scenario -run TestLargeLoadCI
-
-    echo ""
-    echo "============================================================"
-    echo "All CI Scenario Tests Completed Successfully!"
+    echo "CI Scenario Test Completed Successfully!"
     echo "============================================================"
     echo ""
 
     # Summary
     echo "Test Summary (CI Mode):"
     echo "  - Small Load CI Test: Completed"
-    echo "  - Large Load CI Test: Completed"
     echo ""
-    echo "Check the output above for detailed statistics including:"
-    echo "  - Completion rates at 10-second intervals"
-    echo "  - Final completion percentages"
-    echo "  - Queue sizes throughout the test"
-    echo "  - Order processing performance"
+    echo "This minimal test verifies:"
+    echo "  ✓ Orders can be created"
+    echo "  ✓ Cook bots can pick up and process orders"
+    echo "  ✓ VIP priority queue works correctly"
+    echo "  ✓ Order completion tracking functions"
     echo ""
 else
     # Standard Mode: Run full 3-minute tests

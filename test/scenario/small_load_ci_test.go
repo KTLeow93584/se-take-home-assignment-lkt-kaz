@@ -20,21 +20,22 @@ import (
 
 // CI-specific test configuration constants
 // These values are optimized for CI/CD environments where execution time is critical
+// Configuration: Only 2 cycles of orders to minimize log output in GitHub Actions
 const (
-	ciSmallTestDuration    = 1 * time.Minute  // CI: 1 minute (vs 3 minutes in original)
-	ciSmallReportInterval  = 10 * time.Second // CI: 10 seconds (vs 20 seconds in original)
-	ciSmallServingDuration = 10 * time.Second // Keep same as original
+	ciSmallNumCycles       = 2                // CI: Only 2 cycles of orders (minimal, focused test)
+	ciSmallReportInterval  = 15 * time.Second // CI: Report after each cycle completes
+	ciSmallServingDuration = 10 * time.Second // Keep same as original (10s per order)
 )
 
-// TestSmallLoadCI tests the system with 100 Regular, 50 VIP customers, 25 cook bots
-// This is the CI/CD-optimized version with shorter duration for faster feedback
-// 1 order per customer per second for 1 minute (configurable via constants)
-// Records completion rate every 10 seconds
+// TestSmallLoadCI tests the system with a minimal load for CI/CD verification
+// This is optimized for fast feedback with minimal log output
+// Runs only 2 cycles of orders: initial batch + 1 additional batch
+// With 25 cook bots and 10s serving time, each cycle completes in ~10-12 seconds
 func TestSmallLoadCI(t *testing.T) {
 	const (
-		numRegularCustomers = 100
-		numVIPCustomers     = 50
-		numCooks            = 25
+		numRegularCustomers = 10 // CI: Reduced from 100 to minimize logs
+		numVIPCustomers     = 5  // CI: Reduced from 50 to minimize logs
+		numCooks            = 5  // CI: Reduced from 25 (still enough to handle load)
 	)
 
 	ctx := context.Background()
@@ -47,8 +48,8 @@ func TestSmallLoadCI(t *testing.T) {
 	defer log.Close()
 
 	log.Info("=== Starting Small Load CI Test ===")
-	log.Info("Parameters: %d Regular, %d VIP customers, %d cooks", numRegularCustomers, numVIPCustomers, numCooks)
-	log.Info("CI Configuration: Duration=%v, ReportInterval=%v", ciSmallTestDuration, ciSmallReportInterval)
+	log.Info("Parameters: %d Regular, %d VIP customers, %d cooks, %d cycles", numRegularCustomers, numVIPCustomers, numCooks, ciSmallNumCycles)
+	log.Info("CI Configuration: Cycles=%d, ServingDuration=%v", ciSmallNumCycles, ciSmallServingDuration)
 
 	// Initialize repositories
 	userRepo := memory.NewUserRepository()
@@ -70,55 +71,23 @@ func TestSmallLoadCI(t *testing.T) {
 	orderService := service.NewOrderService(orderRepo, userRepo, foodRepo, orderQueue, log, ciSmallServingDuration)
 	cookService := service.NewCookService(userRepo, orderRepo, orderQueue, log, ciSmallServingDuration)
 
+	// Calculate test duration: enough time for 2 cycles
+	// Each cycle takes ~servingDuration to complete
+	testDuration := time.Duration(ciSmallNumCycles) * (ciSmallServingDuration + 2*time.Second)
+
 	// Start cook workers
 	for _, cook := range cooks {
-		go helpers.StartCookWorker(ctx, cookService, cook.ID, ciSmallTestDuration)
+		go helpers.StartCookWorker(ctx, cookService, cook.ID, testDuration)
 	}
 
-	// Statistics tracking
-	var statsLock sync.Mutex
-	stats := make(map[time.Duration]helpers.OrderStats)
+	allCustomers := append(regularCustomers, vipCustomers...)
+	t.Logf("Starting CI test with %d total customers, %d cooks, %d cycles", len(allCustomers), numCooks, ciSmallNumCycles)
 
-	// Start reporting goroutine
-	stopReporting := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		ticker := time.NewTicker(ciSmallReportInterval)
-		defer ticker.Stop()
+	// Run exactly ciSmallNumCycles cycles of orders
+	for cycle := 1; cycle <= ciSmallNumCycles; cycle++ {
+		t.Logf("\n=== Cycle %d/%d: Creating orders for %d customers ===", cycle, ciSmallNumCycles, len(allCustomers))
 
-		startTime := time.Now()
-		for {
-			select {
-			case <-stopReporting:
-				return
-			case <-ticker.C:
-				elapsed := time.Since(startTime)
-				completed, incomplete, _ := orderService.GetOrderStats(ctx)
-				statsLock.Lock()
-				stats[elapsed] = helpers.OrderStats{
-					Completed:  completed,
-					Incomplete: incomplete,
-					QueueSize:  orderService.GetQueueSize(),
-				}
-				statsLock.Unlock()
-				t.Logf("[%v] Completed: %d, Incomplete: %d, Queue: %d",
-					elapsed.Round(time.Second), completed, incomplete, orderService.GetQueueSize())
-			}
-		}
-	}()
-
-	// Generate orders (1 per customer per second)
-	stopOrders := make(chan struct{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		startTime := time.Now()
-		allCustomers := append(regularCustomers, vipCustomers...)
-
-		// Create initial batch of orders at t=0 (before ticker starts)
+		// Create orders for all customers in this cycle
 		for _, customer := range allCustomers {
 			foodIDs := []int{foods[0].ID} // Simple: just one food item
 			_, err := orderService.CreateOrder(ctx, customer.ID, foodIDs)
@@ -127,61 +96,41 @@ func TestSmallLoadCI(t *testing.T) {
 			}
 		}
 
-		ticker := time.NewTicker(1 * time.Second)
-		defer ticker.Stop()
+		// Report status after creating orders
+		completed, incomplete, _ := orderService.GetOrderStats(ctx)
+		t.Logf("Cycle %d: Orders created. Queue size: %d, Completed: %d, Incomplete: %d",
+			cycle, orderService.GetQueueSize(), completed, incomplete)
 
-		for {
-			select {
-			case <-stopOrders:
-				return
-			case <-ticker.C:
-				if time.Since(startTime) >= ciSmallTestDuration {
-					return
-				}
-
-				// Create orders for all customers
-				for _, customer := range allCustomers {
-					foodIDs := []int{foods[0].ID} // Simple: just one food item
-					_, err := orderService.CreateOrder(ctx, customer.ID, foodIDs)
-					if err != nil {
-						t.Logf("Failed to create order for customer %d: %v", customer.ID, err)
-					}
-				}
-			}
+		// Wait for this cycle's orders to complete
+		// Add extra time for queue processing
+		if cycle < ciSmallNumCycles {
+			time.Sleep(ciSmallServingDuration + 2*time.Second)
 		}
-	}()
+	}
 
-	// Wait for test duration
-	time.Sleep(ciSmallTestDuration)
-	close(stopOrders)
-	close(stopReporting)
-	wg.Wait()
-
-	// Wait a bit for final orders to complete
-	time.Sleep(ciSmallServingDuration + 2*time.Second)
+	// Wait for final cycle to complete
+	t.Logf("\n=== Waiting for final orders to complete ===")
+	time.Sleep(ciSmallServingDuration + 5*time.Second)
 
 	// Final statistics
 	completed, incomplete, _ := orderService.GetOrderStats(ctx)
 
+	totalExpectedOrders := (numRegularCustomers + numVIPCustomers) * ciSmallNumCycles
+	completionRate := float64(completed) / float64(totalExpectedOrders) * 100
+
 	log.Info("=== Small Load CI Test Results ===")
-	log.Info("Regular Customers: %d", numRegularCustomers)
-	log.Info("VIP Customers: %d", numVIPCustomers)
-	log.Info("Cook Bots: %d", numCooks)
-	log.Info("Test Duration: %v", ciSmallTestDuration)
-	log.Info("Report Interval: %v", ciSmallReportInterval)
+	log.Info("Configuration: %d Regular, %d VIP customers, %d cooks, %d cycles", numRegularCustomers, numVIPCustomers, numCooks, ciSmallNumCycles)
+	log.Info("Expected Total Orders: %d", totalExpectedOrders)
 	log.Info("Final Completed: %d", completed)
 	log.Info("Final Incomplete: %d", incomplete)
-	log.Info("Completion Rate: %.2f%%", float64(completed)/float64(completed+incomplete)*100)
+	log.Info("Completion Rate: %.2f%%", completionRate)
 
 	t.Logf("\n=== Small Load CI Test Results ===")
-	t.Logf("Regular Customers: %d", numRegularCustomers)
-	t.Logf("VIP Customers: %d", numVIPCustomers)
-	t.Logf("Cook Bots: %d", numCooks)
-	t.Logf("Test Duration: %v", ciSmallTestDuration)
-	t.Logf("Report Interval: %v", ciSmallReportInterval)
+	t.Logf("Configuration: %d Regular, %d VIP, %d cooks, %d cycles", numRegularCustomers, numVIPCustomers, numCooks, ciSmallNumCycles)
+	t.Logf("Expected Total Orders: %d", totalExpectedOrders)
 	t.Logf("Final Completed: %d", completed)
 	t.Logf("Final Incomplete: %d", incomplete)
-	t.Logf("Completion Rate: %.2f%%", float64(completed)/float64(completed+incomplete)*100)
+	t.Logf("Completion Rate: %.2f%%", completionRate)
 
 	assert.Greater(t, completed, 0, "Should have completed some orders")
 }

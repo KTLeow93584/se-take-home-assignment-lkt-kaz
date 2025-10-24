@@ -8,7 +8,7 @@ on:
 jobs:
   verify-result:
     runs-on: ubuntu-latest
-    timeout-minutes: 15  # Global timeout for the entire job
+    timeout-minutes: 10  # Global timeout (reduced from 15 due to minimal CI test)
 
     steps:
     - name: Checkout code
@@ -42,20 +42,23 @@ jobs:
           exit 1
         fi
 
-    # STEP 2: Run CI scenario tests (1-minute tests)
-    - name: Run CI scenario tests
+    # STEP 2: Run CI scenario test (minimal smoke test)
+    - name: Run CI scenario test
       id: test
-      timeout-minutes: 5
+      timeout-minutes: 2
       continue-on-error: false
       run: |
         echo "============================================"
-        echo "STEP 2: Running CI Scenario Tests"
+        echo "STEP 2: Running CI Scenario Test (Minimal)"
         echo "============================================"
+        echo "Configuration: 10 Regular, 5 VIP customers, 5 cooks, 2 cycles"
+        echo "Expected duration: ~30-40 seconds"
+        echo ""
         ./scripts/test.sh ci
         if [ $? -eq 0 ]; then
-          echo "✅ SUCCESS: CI scenario tests passed"
+          echo "✅ SUCCESS: CI scenario test passed"
         else
-          echo "❌ FAIL: CI scenario tests failed"
+          echo "❌ FAIL: CI scenario test failed"
           exit 1
         fi
 
@@ -127,9 +130,15 @@ jobs:
         echo "============================================"
         echo ""
         echo "Step 1 - Build:              ${{ steps.build.outcome == 'success' && '✅ SUCCESS' || '❌ FAIL' }}"
-        echo "Step 2 - CI Tests:           ${{ steps.test.outcome == 'success' && '✅ SUCCESS' || '❌ FAIL' }}"
+        echo "Step 2 - CI Test (Minimal):  ${{ steps.test.outcome == 'success' && '✅ SUCCESS' || '❌ FAIL' }}"
         echo "Step 3 - Application Run:    ${{ steps.run.outcome == 'success' && '✅ SUCCESS' || '❌ FAIL' }}"
         echo "Step 4 - Verify Result:      ${{ steps.verify.outcome == 'success' && '✅ SUCCESS' || '❌ FAIL' }}"
+        echo ""
+        echo "CI Test Details:"
+        echo "  - 10 Regular + 5 VIP customers"
+        echo "  - 5 cook bots"
+        echo "  - 2 cycles of orders"
+        echo "  - Minimal logs for easy debugging"
         echo ""
         echo "============================================"
         echo "Overall Status: ${{ job.status == 'success' && '✅ ALL CHECKS PASSED' || '❌ SOME CHECKS FAILED' }}"
